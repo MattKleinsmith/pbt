@@ -38,7 +38,7 @@ Experiment settings:
 
 Methodology:
 - Goal: Don't let the hyperparameter optimization algorithms see the test set.
-- Approach: Train each model on the partial training set. Assess it and its hyperparameters with the validation set. Repeat until the hyperparameter optimization processes are done. Then, reset the best performing model to its initialization and train it on the full training set, using the best found hyperparameter configuration or schedule. Finally, assess it on the test set. Repeat this process with different seeds and report the mean difference in performance between the algorithms, along with the variance.
+- Approach: Train each model on the partial training set. Assess it and its hyperparameters with the validation set. Repeat until the hyperparameter optimization process is done. Then, reset the best performing model to its initialization and train it on the full training set, using the best found hyperparameter configuration or schedule. Finally, assess it on the test set. Repeat this process with different seeds and report the mean accuracy with a confidence interval. Repeat for each hypperparameter optimization algorithm.
 
 PBT settings
 - Exploitation interval: 0.5 epochs

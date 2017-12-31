@@ -13,7 +13,7 @@ import seaborn as sns
 import tqdm
 
 from data_loaders import get_train_valid_loader, get_test_loader
-from experimenter import Experimenter
+from population import Population
 
 
 plt.switch_backend('agg')
@@ -64,10 +64,10 @@ def plot_hyperparams(pbt_experimenter, random_experimenter, accuracy_key,
 if __name__ == "__main__":
     DATA_DIR = "../../data/mnist/"
     HOURS_AVAILABLE = 1
-    EXPERIMENTS_PER_HOUR = 3  # About 3 on a 1080 Ti, with these settings
-    POPULATION_SIZE = 15  # Number of models in a population
-    EPOCHS = 10
+    EXPERIMENTS_PER_HOUR = 2  # About 3 on a 1080 Ti, with these settings
+    EPOCHS = 1
     BATCH_SIZE = 64
+    POPULATION_SIZE = 2  # Number of models in a population
     EXPLOIT_INTERVAL = 0.5  # When to exploit, in number of epochs
 
     number_of_experiments = int(EXPERIMENTS_PER_HOUR * HOURS_AVAILABLE)
@@ -80,7 +80,7 @@ if __name__ == "__main__":
                                                         random_seed=123,
                                                         show_sample=False)
     test_loader = get_test_loader(DATA_DIR, batch_size=BATCH_SIZE*2)
-    experiment_kwargs = dict(model_class=model_class,
+    population_kwargs = dict(model_class=model_class,
                              optimizer_class=optimizer_class,
                              hyperparam_names=hyperparam_names,
                              train_loader=train_loader,
@@ -94,14 +94,6 @@ if __name__ == "__main__":
 
     seeds = tqdm.trange(number_of_experiments, ncols=80, desc="Seeds")
     for seed in seeds:
-        pbt_experimenter = Experimenter(**experiment_kwargs,  # noqa
-                                        seed=seed, do_pbt=True)
-        random_experimenter = Experimenter(**experiment_kwargs,
-                                           seed=seed, do_pbt=False)
-        pbt_experimenter.run("pbt")
-        random_experimenter.run("random search")
-
-        plot_accuracies(pbt_experimenter, random_experimenter,
-                        "valid_accuracy", seed)
-        plot_hyperparams(pbt_experimenter, random_experimenter,
-                         "valid_accuracy", seed)
+        pbt_population = Population(**population_kwargs,  # noqa
+                                    seed=seed, do_pbt=True)
+        pbt_population.train("pbt")

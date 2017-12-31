@@ -5,7 +5,7 @@ from trainer import Trainer
 from utils import set_seed
 
 
-class Experimenter:
+class Population:
 
     def __init__(self, model_class, optimizer_class,
                  train_loader, valid_loader, test_loader,
@@ -46,9 +46,9 @@ class Experimenter:
         interval = (interval-1) if interval % 2 else interval
         return interval
 
-    def save_history(self, log_hyperparams):
+    def save_history(self, save_hyperparams):
         for trainer in self.trainers:
-            trainer.log(log_hyperparams=log_hyperparams)
+            trainer.save_history(save_hyperparams=save_hyperparams)
 
     def sort_trainers_by_accuracy(self, accuracy_key):
         """Ascending order.
@@ -78,8 +78,9 @@ class Experimenter:
                 best_trainer = trainer
         return best_trainer
 
-    def run(self, runname):
-        self.save_history(log_hyperparams=True)
+    def train(self, runname):
+        best_trainer_ids = []
+        self.save_history(save_hyperparams=True)
         epochs = tqdm.trange(self.epochs, ncols=80,
                              desc="Epochs (%s)" % runname)
         for epoch_i in epochs:
@@ -94,9 +95,10 @@ class Experimenter:
                 at_half_interval = (batch_i+1) % self.half_interval == 0
                 at_exploit_interval = (batch_i+1) % self.exploit_interval == 0
                 if at_half_interval:
-                    self.save_history(log_hyperparams=at_exploit_interval)
+                    self.save_history(save_hyperparams=at_exploit_interval)
                 if at_exploit_interval:
                     best_trainer = self.get_best_trainer(final_selection=False)
+                    best_trainer_ids.append(best_trainer.id)
                 for trainer in self.trainers:
                     condition = at_exploit_interval and self.do_pbt
                     if condition and trainer != best_trainer:

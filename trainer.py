@@ -22,11 +22,12 @@ class Trainer:
         self.momentum = choose(np.linspace(0.1, .9999))
         self.optimizer = optim.SGD(self.model.parameters(),
                                    lr=self.lr, momentum=self.momentum)
+        self.parent = self.id
         self.history = {"lr": [], "momentum": [],
                         "test_accuracy": [], "valid_accuracy": []}
 
-    def log(self, log_hyperparams):
-        if log_hyperparams:
+    def save_history(self, save_hyperparams):
+        if save_hyperparams:
             self.history['lr'].append(self.lr)
             self.history['momentum'].append(self.momentum)
         # self.history['test_accuracy'].append(self.eval(self.test_loader))
