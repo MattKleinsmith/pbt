@@ -6,12 +6,37 @@
 
 # Adapted for MNIST by github.com/MatthewKleinsmith
 
+
 import numpy as np
 import torch
 from torchvision import datasets, transforms
 from torch.utils.data.sampler import SubsetRandomSampler
+import matplotlib.pyplot as plt
 
-from utils import plot_images
+
+def plot_images(images, labels, preds=None):
+
+    assert len(images) == len(labels) == 9
+
+    # Create figure with sub-plots.
+    fig, axes = plt.subplots(3, 3)
+
+    for i, ax in enumerate(axes.flat):
+        ax.imshow(images[i, 0, :, :], interpolation='spline16', cmap='gray')
+
+        label = str(labels[i])
+        if preds is None:
+            xlabel = label
+        else:
+            pred = str(preds[i])
+            xlabel = "True: {0}\nPred: {1}".format(label, pred)
+
+        ax.set_xlabel(xlabel)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    plt.show()
+
 
 def get_train_valid_loader(data_dir,
                            batch_size,
@@ -92,14 +117,15 @@ def get_train_valid_loader(data_dir,
     train_sampler = SubsetRandomSampler(train_idx)
     valid_sampler = SubsetRandomSampler(valid_idx)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset,
-                    batch_size=batch_size, sampler=train_sampler,
-                    num_workers=num_workers, pin_memory=pin_memory)
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=batch_size, sampler=train_sampler,
+        num_workers=num_workers, pin_memory=pin_memory)
 
-    valid_loader = torch.utils.data.DataLoader(valid_dataset,
-                    batch_size=batch_size, sampler=valid_sampler,
-                    num_workers=num_workers, pin_memory=pin_memory)
-
+    valid_loader = torch.utils.data.DataLoader(
+        valid_dataset,
+        batch_size=batch_size, sampler=valid_sampler,
+        num_workers=num_workers, pin_memory=pin_memory)
 
     # visualize some images
     if show_sample:
@@ -114,6 +140,7 @@ def get_train_valid_loader(data_dir,
         plot_images(X, labels)
 
     return (train_loader, valid_loader)
+
 
 def get_test_loader(data_dir,
                     batch_size,
