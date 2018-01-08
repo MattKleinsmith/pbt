@@ -7,23 +7,35 @@ import torch.optim as optim
 from torch.autograd import Variable
 import tqdm
 
-from utils import choose, LossIsNaN
+from utils import choose, LossIsNaN, split_trn_val
 
 
 class Trainer:
 
-    def __init__(self, model_class, train_loader=None, valid_loader=None):
+    def __init__(self, model,
+                 inputs=None, targets=None, batch_size=None, valid_size=0.2,
+                 task_id=None):
         """Note: Trainer objects don't know about the database."""
 
-        self.model = model_class().cuda()
-        self.train_loader = train_loader
-        self.valid_loader = valid_loader
+        self.model = model
 
         self.loss_fn = F.nll_loss
         lr = choose(np.logspace(-5, 0, base=10))
         momentum = choose(np.linspace(0.1, .9999))
         self.optimizer = optim.SGD(self.model.parameters(),
                                    lr=lr, momentum=momentum)
+
+        if inputs:
+            self.inputs = inputs
+            self.targets = targets
+            self.batch_size = batch_size
+
+            # Train-valid split
+            num_examples = len(self.inputs)
+            self.trn_indices, self.val_indices = \
+                split_trn_val(num_examples, valid_size)
+
+        self.task_id = task_id
 
     def save_checkpoint(self, checkpoint_path):
         checkpoint = dict(model_state_dict=self.model.state_dict(),
@@ -35,25 +47,27 @@ class Trainer:
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optim_state_dict'])
 
-    def train(self, second_half):
-        train_iter = iter(self.train_loader)
-        num_batches = len(train_iter) // 2
-        if second_half:
-            for _ in range(num_batches):
-                next(train_iter)
-        batch_indices = tqdm.trange(num_batches, ncols=80, desc="Batches")
-        for _ in batch_indices:
-            try:
-                data, target = next(train_iter)
-            except StopIteration:
-                break
-            self.step(data, target)
+    def train(self, second_half, seed_for_shuffling):
+        np.random.seed(seed_for_shuffling)
+        np.random.shuffle(self.trn_indices)
+        num_batches = int(np.ceil(len(self.trn_indices) / self.batch_size))
+        # batch_indices = tqdm.tqdm(range(num_batches),
+        #                           desc='Train (task %d)' % self.task_id,
+        #                           ncols=80, leave=True)
+        batch_indices = range(num_batches)  # Debugging
+        for k in batch_indices:
+            if second_half and k < num_batches//2:
+                continue
+            inp = self.inputs[k*self.batch_size:(k+1)*self.batch_size]
+            target = self.targets[k*self.batch_size:(k+1)*self.batch_size]
+            self.step(inp, target)
 
-    def step(self, data, target):
+    def step(self, inp, target):
         """Forward pass and backpropagation"""
         self.model.train()
-        data, target = Variable(data.cuda()), Variable(target.cuda())
-        output = self.model(data)
+        inp = Variable(torch.from_numpy(inp).cuda())
+        target = Variable(torch.from_numpy(target).long().cuda())
+        output = self.model(inp)
         loss = self.loss_fn(output, target)
         if np.isnan(float(loss.data[0])):
             print("Loss is NaN.")
@@ -62,29 +76,25 @@ class Trainer:
         loss.backward()
         self.optimizer.step()
 
-    def eval(self, data_loader=None):
+    def eval(self, interval_id):
         """Evaluate model on the provided validation or test set."""
         self.model.eval()
         correct = 0
-        if data_loader is None:
-            data_loader = self.valid_loader
-        data_iter = iter(data_loader)
-        batch_indices = tqdm.trange(len(data_iter),
-                                    ncols=80, desc="Batches (eval)")
+        num_batches = int(np.ceil(len(self.val_indices) / (self.batch_size)))
+        # batch_indices = tqdm.tqdm(range(num_batches),
+        #                           desc='Eval (interval %d)' % interval_id,
+        #                           ncols=80, leave=True)
+        batch_indices = range(num_batches)  # Debugging
         with torch.no_grad():
-            for _ in batch_indices:
-                try:
-                    data, target = next(data_iter)
-                except StopIteration:
-                    break
-                data, target = (Variable(data.cuda()), Variable(target.cuda()))
-                output = self.model(data)
+            for k in batch_indices:
+                inp = self.inputs[k*self.batch_size:(k+1)*self.batch_size]
+                target = self.targets[k*self.batch_size:(k+1)*self.batch_size]
+                inp = Variable(torch.from_numpy(inp).cuda())
+                target = Variable(torch.from_numpy(target).long().cuda())
+                output = self.model(inp)
                 pred = output.data.max(1, keepdim=True)[1]
                 correct += pred.eq(target.data.view_as(pred)).cpu().sum()
-        # len(data_loader.dataset) is incorrect if you use a sampler.
-        #   e.g. SubsetRandomSampler in data_loaders.py
-        num_examples = len(data_loader) * data_loader.batch_size
-        accuracy = 100. * correct / num_examples
+        accuracy = 100. * correct / len(self.val_indices)
         return accuracy
 
     def exploit_and_explore(self, better_trainer, hyperparam_names,
