@@ -44,6 +44,10 @@ if __name__ == "__main__":
     nproc = mkl.get_max_threads()  # e.g. 12
     mkl.set_num_threads(nproc)
 
+#TODO:
+#    - Use --remote mwk-ws to make processes transfer checkpoints to the
+# corresponding location on mwk-ws after they produce the checkpoints.
+# This way when the exploiter exploits, all the checkpoints are available locally.
     parser = argparse.ArgumentParser(description="Population Based Training")
     parser.add_argument("-g", "--gpu", type=int, default=0, help="Selects GPU with the given ID. IDs are those shown in nvidia-smi.")  # noqa
     parser.add_argument("-r", "--resume", type=int, default=None, help="Resumes work on the population with the given ID. Use -1 to select the most recently created population.")  # noqa
@@ -59,10 +63,10 @@ if __name__ == "__main__":
     HYPERPARAM_NAMES = ["lr", "momentum"]
     # HP ranges and scales hardcoded into trainer.py
 
-    EPOCHS = 2
+    EPOCHS = 10
     BATCH_SIZE = 64
 
-    POPULATION_SIZE = 5  # Number of models in a population  # Maybe 20
+    POPULATION_SIZE = 15  # Number of models in a population  # Maybe 20
     EXPLOIT_INTERVAL = 0.5  # When to exploit, in number of epochs
 
     interval_limit = int(np.ceil(EPOCHS / EXPLOIT_INTERVAL))
@@ -133,7 +137,9 @@ if __name__ == "__main__":
             task_wait_count += 1
             continue
         except PopulationFinished:
-            print("Population finished.")
+            scores = get_col_from_populations(
+                db_connect_str, population_id, "scores")
+            print("Population finished. Best score: %.2f" % max(scores))
             break
         except ExploitationNeeded:
             if exploiter:
@@ -163,6 +169,7 @@ if __name__ == "__main__":
                                            (population_id, bottom_id))
                     bot_trainer.exploit_and_explore(top_trainer,
                                                     HYPERPARAM_NAMES)
+                    bot_trainer.save_checkpoint(bot_checkpoint_path)
                     key_value_pairs = dict(
                         ready_for_exploitation=False,
                         score=None,
