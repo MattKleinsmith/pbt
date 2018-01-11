@@ -13,8 +13,8 @@ from PIL import Image
 import psutil
 import pandas as pd
 from pandas.io.sql import DatabaseError
-from psycopg2.extensions import register_adapter, AsIs
 import psycopg2
+from psycopg2.extensions import register_adapter, AsIs
 from psycopg2.sql import SQL, Identifier
 import torch
 import torch.nn.functional as F
@@ -63,12 +63,27 @@ def register_numpy_types():
         register_adapter(np.__getattribute__(typ), AsIs)
 
 
-def get_task_ids_and_scores(db_connect_str, population_id):
-    conn = psycopg2.connect(db_connect_str)
+def get_task_ids_and_scores(connect_str_or_path, use_sqlite, population_id):
+    if use_sqlite:
+        sqlite_path = connect_str_or_path
+        conn = sqlite3.connect(sqlite_path)
+        command = """
+                  SELECT task_id, score
+                  FROM populations
+                  WHERE population_id = ?
+                  ORDER BY score DESC
+                  """
+    else:
+        db_connect_str = connect_str_or_path
+        conn = psycopg2.connect(db_connect_str)
+        command = """
+                  SELECT task_id, score
+                  FROM populations
+                  WHERE population_id = %s
+                  ORDER BY score DESC
+                  """
     cur = conn.cursor()
-    query = """SELECT task_id, score FROM populations WHERE population_id = %s
-               ORDER BY score DESC"""
-    cur.execute(query, [population_id])
+    cur.execute(command, [population_id])
     results = cur.fetchall()
     cur.close()
     conn.close()
@@ -77,12 +92,20 @@ def get_task_ids_and_scores(db_connect_str, population_id):
     return task_ids, scores
 
 
-def get_col_from_populations(db_connect_str, population_id, column_name):
-    conn = psycopg2.connect(db_connect_str)
+def get_col_from_populations(connect_str_or_path, use_sqlite,
+                             population_id, column_name):
+    if use_sqlite:
+        sqlite_path = connect_str_or_path
+        conn = sqlite3.connect(sqlite_path)
+        command = "SELECT {} FROM populations WHERE population_id = ?"
+        command = command.format(column_name)  # Warning: SQL injection
+    else:
+        db_connect_str = connect_str_or_path
+        conn = psycopg2.connect(db_connect_str)
+        command = "SELECT {} FROM populations WHERE population_id = %s"
+        command = SQL(command).format(Identifier(column_name))
     cur = conn.cursor()
-    query = "SELECT {} FROM populations WHERE population_id = %s"
-    query = SQL(query).format(Identifier(column_name))
-    cur.execute(query, [population_id])
+    cur.execute(command, [population_id])
     column = cur.fetchall()
     cur.close()
     conn.close()
@@ -90,89 +113,113 @@ def get_col_from_populations(db_connect_str, population_id, column_name):
     return column
 
 
-def get_max_of_db_column(connect_str_or_path, use_sqlite, table_name,
-                         column_name):
-    if use_sqlite:
-        sqlite_path = connect_str_or_path
-        print("null")
-    else:
-        db_connect_str = connect_str_or_path
-        conn = psycopg2.connect(db_connect_str)
-        cur = conn.cursor()
-        parameters = [Identifier(column_name), Identifier(table_name)]
-        cur.execute(SQL("SELECT MAX({}) FROM {}").format(*parameters))
-        max_value = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-    return max_value
-
-
-def update_table(db_connect_str, table_name, key_value_pairs,
+def update_table(connect_str_or_path, use_sqlite, table_name, key_value_pairs,
                  where_string=None, where_variables=None):
-    register_numpy_types()
-    table_name = Identifier(table_name)
-    fields = [Identifier(field) for field in key_value_pairs.keys()]
     values = [v.__name__ if callable(v) or isinstance(v, type) else v
               for v in key_value_pairs.values()]
-    conn = psycopg2.connect(db_connect_str)
-    cur = conn.cursor()
-    update_part = "UPDATE {}"
-    placeholders = get_format_positions(len(key_value_pairs), "{} = %s")
-    set_part = "SET {}".format(placeholders)
-    if where_string:
-        where_part = where_string
-        parameters = values + where_variables
+    if use_sqlite:
+        sqlite_path = connect_str_or_path
+        conn = sqlite3.connect(sqlite_path)
+        fields = list(key_value_pairs.keys())
+        placeholders = get_placeholders(len(key_value_pairs), "{} = ?")
+        if where_string is None:
+            where_string = "WHERE id = ?"
+            row_id = key_value_pairs['id']
+            where_variables = [row_id]
+        command = " ".join(["UPDATE {}",
+                            "SET {}".format(placeholders),
+                            where_string])
+        command = command.format(table_name, *fields)
     else:
-        where_part = "WHERE id = %s"
-        row_id = key_value_pairs['id']
-        parameters = values + [row_id]
-    query = update_part + " " + set_part + " " + where_part
-    query = SQL(query).format(table_name, *fields)
-    cur.execute(query, parameters)
+        register_numpy_types()
+        db_connect_str = connect_str_or_path
+        conn = psycopg2.connect(db_connect_str)
+        table_name = Identifier(table_name)
+        fields = [Identifier(field) for field in key_value_pairs.keys()]
+        placeholders = get_placeholders(len(key_value_pairs), "{} = %s")
+        if where_string is None:
+            where_string = "WHERE id = %s"
+            row_id = key_value_pairs['id']
+            where_variables = [row_id]
+        command = " ".join(["UPDATE {}",
+                            "SET {}".format(placeholders),
+                            where_string])
+        command = SQL(command).format(table_name, *fields)
+    parameters = values + where_variables
+    cur = conn.cursor()
+    cur.execute(command, parameters)
     conn.commit()
     cur.close()
     conn.close()
 
 
-def update_task(db_connect_str, population_id, task_id, key_value_pairs):
-    where_string = "WHERE population_id = %s AND task_id = %s"
+def update_task(connect_str_or_path, use_sqlite,
+                population_id, task_id, key_value_pairs):
+    if use_sqlite:
+        where_string = "WHERE population_id = ? AND task_id = ?"
+    else:
+        where_string = "WHERE population_id = %s AND task_id = %s"
     where_variables = [population_id, task_id]
-    update_table(db_connect_str, "populations", key_value_pairs,
+    update_table(connect_str_or_path, use_sqlite,
+                 "populations", key_value_pairs,
                  where_string=where_string, where_variables=where_variables)
 
 
-def get_a_task(db_connect_str, population_id, interval_limit):
-    conn = psycopg2.connect(db_connect_str)
+def get_a_task(connect_str_or_path, use_sqlite, population_id, interval_limit):
+    if use_sqlite:
+        sqlite_path = connect_str_or_path
+        conn = sqlite3.connect(sqlite_path)
+        command_get_task = """
+                           SELECT task_id
+                           FROM populations
+                           WHERE population_id = ?
+                           AND ready_for_exploitation = 0
+                           AND active = 0
+                           LIMIT 1
+                           """
+        command_lock_task = """
+                            UPDATE populations
+                            SET active = 1
+                            WHERE population_id = ?
+                            AND task_id = ?
+                            """
+        command_get_task_info = """
+                                SELECT intervals_trained, seed_for_shuffling
+                                FROM populations
+                                WHERE population_id = ?
+                                AND task_id = ?
+                                """
+    else:
+        db_connect_str = connect_str_or_path
+        conn = psycopg2.connect(db_connect_str)
+        command_get_task = """
+                           SELECT task_id
+                           FROM populations
+                           WHERE population_id = %s
+                           AND ready_for_exploitation = False
+                           AND active = False
+                           LIMIT 1
+                           FOR SHARE
+                           """
+        command_lock_task = """
+                            UPDATE populations
+                            SET active = True
+                            WHERE population_id = %s
+                            AND task_id = %s
+                            """
+        command_get_task_info = """
+                                SELECT intervals_trained, seed_for_shuffling
+                                FROM populations
+                                WHERE population_id = %s
+                                AND task_id = %s
+                                """
     cur = conn.cursor()
-
-    query = """
-                SELECT task_id
-                FROM populations
-                WHERE population_id = %s
-                AND ready_for_exploitation = False
-                AND active = False
-                LIMIT 1
-                FOR SHARE
-            """
-    cur.execute(query, [population_id])
+    cur.execute(command_get_task, [population_id])
     try:
         task_id = cur.fetchone()[0]
-        query = """
-                    UPDATE populations
-                    SET active = True
-                    WHERE population_id = %s
-                    AND task_id = %s
-                """
-        cur.execute(query, [population_id, task_id])
+        cur.execute(command_lock_task, [population_id, task_id])
         conn.commit()
-
-        query = """
-                    SELECT intervals_trained, seed_for_shuffling
-                    FROM populations
-                    WHERE population_id = %s
-                    AND task_id = %s
-                """
-        cur.execute(query, [population_id, task_id])
+        cur.execute(command_get_task_info, [population_id, task_id])
         intervals_trained, seed_for_shuffling = cur.fetchone()
         cur.close()
         conn.close()
@@ -181,109 +228,171 @@ def get_a_task(db_connect_str, population_id, interval_limit):
         cur.close()
         conn.close()
         activities = get_col_from_populations(
-            db_connect_str, population_id, "active")
+            connect_str_or_path, use_sqlite, population_id, "active")
         any_are_active = [a for a in activities if a]
         if any_are_active:
             raise RemainingTasksTaken
         intervals_trained_col = get_col_from_populations(
-            db_connect_str, population_id, "intervals_trained")
-        unfinished = [i for i in intervals_trained_col if i < interval_limit]
+            connect_str_or_path, use_sqlite, population_id,
+            "intervals_trained")
+        unfinished = [i for i in intervals_trained_col
+                      if i < interval_limit]
         if not unfinished:
             raise PopulationFinished
         readys = get_col_from_populations(
-            db_connect_str, population_id, "ready_for_exploitation")
+            connect_str_or_path, use_sqlite, population_id,
+            "ready_for_exploitation")
         not_ready = [r for r in readys if not r]
         if not not_ready:
             raise ExploitationNeeded
         else:
-            print_with_time([intervals_trained_col, readys, activities])
             raise ExploitationOcurring
 
 
-def get_a_task2(db_connect_str, population_id, interval_limit):
-    """Gets the task_id of an incomplete and inactive task, and then sets the
-       task to active."""
-    conn = psycopg2.connect(db_connect_str)
-    cur = conn.cursor()
-    query = """SELECT {}, {}, {} FROM populations WHERE
-               population_id = %s AND
-               ready_for_exploitation = False AND active = False"""
-    names = list(map(Identifier,
-                 ["task_id", "intervals_trained", "seed_for_shuffling"]))
-    query = SQL(query).format(*names)
-    cur.execute(query, [population_id])
-    try:
-        task_id, intervals_trained, seed_for_shuffling = cur.fetchone()
-    except TypeError:
-        cur.close()
-        conn.close()
-        activities = get_col_from_populations(
-            db_connect_str, population_id, "active")
-        any_are_active = [a for a in activities if a]
-        if any_are_active:
-            raise RemainingTasksTaken
-        intervals_trained_col = get_col_from_populations(
-            db_connect_str, population_id, "intervals_trained")
-        unfinished = [i for i in intervals_trained_col if i < interval_limit]
-        if not unfinished:
-            raise PopulationFinished
-        readys = get_col_from_populations(
-            db_connect_str, population_id, "ready_for_exploitation")
-        not_ready = [r for r in readys if not r]
-        if not not_ready:
-            raise ExploitationNeeded
-        else:
-            raise Exception("Error in function: get_a_task")
+def get_max_of_db_column(connect_str_or_path, use_sqlite, table_name,
+                         column_name):
+    if use_sqlite:
+        sqlite_path = connect_str_or_path
+        conn = sqlite3.connect(sqlite_path)
+        cur = conn.cursor()
+        parameters = [column_name, table_name]
+        cur.execute("SELECT MAX({}) FROM {}".format(*parameters))
+    else:
+        db_connect_str = connect_str_or_path
+        conn = psycopg2.connect(db_connect_str)
+        cur = conn.cursor()
+        parameters = [Identifier(column_name), Identifier(table_name)]
+        cur.execute(SQL("SELECT MAX({}) FROM {}").format(*parameters))
+    max_value = cur.fetchone()[0]
     cur.close()
     conn.close()
-    key_value_pairs = dict(active=True)
-    update_task(db_connect_str, population_id, task_id, key_value_pairs)
-    return task_id, intervals_trained, seed_for_shuffling
+    return max_value
 
 
-def insert_into_table(db_connect_str, table_name, key_value_pairs):
-    register_numpy_types()
-    table_name = Identifier(table_name)
-    fields = [Identifier(field) for field in key_value_pairs.keys()]
-    values = [v.__name__ if callable(v) or isinstance(v, type) else v
-              for v in key_value_pairs.values()]
-    conn = psycopg2.connect(db_connect_str)
-    cur = conn.cursor()
-    insert_part = "INSERT INTO {}"
-    field_positions = get_format_positions(len(key_value_pairs), "{}")
-    fields_part = "({})".format(field_positions)
-    value_positions = get_format_positions(len(key_value_pairs), "%s")
-    values_part = "VALUES ({})".format(value_positions)
-    query = insert_part + " " + fields_part + " " + values_part
-    query = SQL(query).format(table_name, *fields)
-    cur.execute(query, values)
+def insert_into_table(connect_str_or_path, use_sqlite, table_name,
+                      key_value_pairs):
+    if use_sqlite:
+        sqlite_path = connect_str_or_path
+        conn = sqlite3.connect(sqlite_path)
+        cur = conn.cursor()
+        fields = key_value_pairs.keys()
+        values = list(key_value_pairs.values())
+        field_placeholders = get_placeholders(len(key_value_pairs), "{}")
+        field_placeholders = "({})".format(field_placeholders)
+        values_placeholders = get_placeholders(len(key_value_pairs), "?")
+        values_placeholders = "({})".format(values_placeholders)
+        # Warning: This command is vulnerable to SQL injection via
+        # the fields variable.
+        command = " ".join(["INSERT INTO populations", field_placeholders,
+                            "VALUES", values_placeholders]).format(*fields)
+    else:
+        # TODO: Clean (see above block)
+        db_connect_str = connect_str_or_path
+        conn = psycopg2.connect(db_connect_str)
+        register_numpy_types()
+        table_name = Identifier(table_name)
+        fields = [Identifier(field) for field in key_value_pairs.keys()]
+        values = [v.__name__ if callable(v) or isinstance(v, type) else v
+                  for v in key_value_pairs.values()]
+        conn = psycopg2.connect(db_connect_str)
+        cur = conn.cursor()
+        insert_part = "INSERT INTO {}"
+        field_positions = get_placeholders(len(key_value_pairs), "{}")
+        fields_part = "({})".format(field_positions)
+        value_positions = get_placeholders(len(key_value_pairs), "%s")
+        values_part = "VALUES ({})".format(value_positions)
+        command = insert_part + " " + fields_part + " " + values_part
+        command = SQL(command).format(table_name, *fields)
+    cur.execute(command, values)
     conn.commit()
     cur.close()
     conn.close()
 
 
-def create_table(db_connect_str, command):
-    conn = None
-    try:
-        conn = psycopg2.connect(db_connect_str)
+def create_table(connect_str_or_path, use_sqlite, command):
+    if use_sqlite:
+        sqlite_path = connect_str_or_path
+        conn = sqlite3.connect(sqlite_path)
         cur = conn.cursor()
         cur.execute(command)
-        cur.close()
         conn.commit()
-    except (Exception, psycopg2.DatabaseError) as error:
-        if "already exists" not in str(error):
-            print(error)
-    finally:
-        if conn is not None:
-            conn.close()
+        cur.close()
+    else:
+        conn = None
+        try:
+            db_connect_str = connect_str_or_path
+            conn = psycopg2.connect(db_connect_str)
+            cur = conn.cursor()
+            cur.execute(command)
+            conn.commit()
+            cur.close()
+        except (Exception, psycopg2.DatabaseError) as error:
+            if "already exists" not in str(error):
+                print(error)
+        finally:
+            if conn is not None:
+                conn.close()
 
 
-def get_format_positions(num, form):
-    positions = ''
-    for _ in range(num-1):
-        positions += (form + ", ")
-    positions += form
-    return positions
+def get_placeholders(num, form):
+    """
+    Example:
+        >>> get_placeholders(num=3, form="%s")
+        '%s, %s, %s'
+    """
+    return ' '.join([form + "," for _ in range(num)])[:-1]
+
+
+def create_new_population(connect_str_or_path, use_sqlite, population_size):
+    if use_sqlite:
+        command = """
+                  CREATE TABLE populations (
+                        population_id INTEGER,
+                        task_id INTEGER,
+                        intervals_trained INTEGER,
+                        ready_for_exploitation INTEGER,
+                        active INTEGER,
+                        score REAL,
+                        seed_for_shuffling INTEGER
+                  )
+                  """
+        ready_for_exploitation = 0
+        active = 0
+    else:
+        command = """
+                  CREATE TABLE populations (
+                        population_id INTEGER,
+                        task_id INTEGER,
+                        intervals_trained INTEGER,
+                        ready_for_exploitation BOOLEAN,
+                        active BOOLEAN,
+                        score REAL,
+                        seed_for_shuffling INTEGER
+                  )
+                  """
+        ready_for_exploitation = False
+        active = False
+    table_name = "populations"
+    try:
+        latest_population_id = get_max_of_db_column(connect_str_or_path,
+                                                    use_sqlite,
+                                                    table_name,
+                                                    "population_id")
+        population_id = latest_population_id + 1
+    except (sqlite3.OperationalError, psycopg2.ProgrammingError):
+        create_table(connect_str_or_path, use_sqlite, command)
+        population_id = 0
+    for task_id in range(population_size):
+        key_value_pairs = dict(population_id=population_id,
+                               task_id=task_id,
+                               intervals_trained=0,
+                               ready_for_exploitation=ready_for_exploitation,
+                               active=active,
+                               score=None,
+                               seed_for_shuffling=123)
+        insert_into_table(connect_str_or_path, use_sqlite, table_name,
+                          key_value_pairs)
+    return population_id
 
 
 def choose(x):
