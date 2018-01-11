@@ -12,20 +12,18 @@ from utils import choose, LossIsNaN, split_trn_val
 
 class Trainer:
 
-    def __init__(self, model,
-                 inputs=None, targets=None, batch_size=None, valid_size=0.2,
-                 task_id=None):
+    def __init__(self, model, optimizer,
+                 loss_fn=None, inputs=None, targets=None, batch_size=None,
+                 valid_size=0.2, task_id=None):
         """Note: Trainer objects don't know about the database."""
 
         self.model = model
+        self.optimizer = optimizer
 
-        self.loss_fn = F.nll_loss
-        lr = choose(np.logspace(-5, 0, base=10))
-        momentum = choose(np.linspace(0.1, .9999))
-        self.optimizer = optim.SGD(self.model.parameters(),
-                                   lr=lr, momentum=momentum)
-
+        # Sometimes we only use a Trainer to load and save checkpoints.
+        #   When that's the case, we don't need the following.
         if inputs:
+            self.loss_fn = loss_fn
             self.inputs = inputs
             self.targets = targets
             self.batch_size = batch_size
