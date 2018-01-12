@@ -12,7 +12,7 @@ Finding a good hyperparameter schedule.
 
 ### How to use this code
 
-Warning: This implementation isn't user friendly yet. If you have any questions, [create a github issue](https://github.com/MatthewKleinsmith/pbt/issues/new) and I'll try to help you.
+Warning: This implementation isn't user friendly yet. If you have any questions, [create a github issue](https://github.com/MattKleinsmith/pbt/issues/new) and I'll try to help you.
 
 Steps:
 
