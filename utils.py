@@ -22,7 +22,7 @@ import torch.nn.functional as F
 
 def print_with_time(x):
     now = datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3]
-    print(now, x)
+    print("%s: %s" % (now, x))
 
 
 class RemainingTasksTaken(Exception):

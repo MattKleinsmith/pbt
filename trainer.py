@@ -2,12 +2,10 @@ from copy import deepcopy
 
 import numpy as np
 import torch
-import torch.nn.functional as F
-import torch.optim as optim
 from torch.autograd import Variable
 import tqdm
 
-from utils import choose, LossIsNaN, split_trn_val
+from utils import LossIsNaN, split_trn_val
 
 
 class Trainer:
@@ -49,10 +47,9 @@ class Trainer:
         np.random.seed(seed_for_shuffling)
         np.random.shuffle(self.trn_indices)
         num_batches = int(np.ceil(len(self.trn_indices) / self.batch_size))
-        # batch_indices = tqdm.tqdm(range(num_batches),
-        #                           desc='Train (task %d)' % self.task_id,
-        #                           ncols=80, leave=True)
-        batch_indices = range(num_batches)  # Debugging
+        batch_indices = tqdm.tqdm(range(num_batches),
+                                  desc='Train (task %d)' % self.task_id,
+                                  ncols=80, leave=True)
         for k in batch_indices:
             if second_half and k < num_batches//2:
                 continue
@@ -79,10 +76,9 @@ class Trainer:
         self.model.eval()
         correct = 0
         num_batches = int(np.ceil(len(self.val_indices) / (self.batch_size)))
-        # batch_indices = tqdm.tqdm(range(num_batches),
-        #                           desc='Eval (interval %d)' % interval_id,
-        #                           ncols=80, leave=True)
-        batch_indices = range(num_batches)  # Debugging
+        batch_indices = tqdm.tqdm(range(num_batches),
+                                  desc='Eval (interval %d)' % interval_id,
+                                  ncols=80, leave=True)
         with torch.no_grad():
             for k in batch_indices:
                 inp = self.inputs[k*self.batch_size:(k+1)*self.batch_size]

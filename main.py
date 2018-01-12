@@ -3,6 +3,7 @@ import mkl
 import os
 import os.path as osp
 import time
+import pathlib
 
 import bcolz
 import numpy as np
@@ -10,8 +11,8 @@ import torch
 from psycopg2.extensions import TransactionRollbackError
 
 from trainer import Trainer
-from utils import (create_table, update_task, get_max_of_db_column,
-                   insert_into_table, get_a_task, ExploitationNeeded,
+from utils import (update_task, get_max_of_db_column,
+                   get_a_task, ExploitationNeeded,
                    LossIsNaN, get_task_ids_and_scores, PopulationFinished,
                    get_col_from_populations, RemainingTasksTaken,
                    print_with_time, ExploitationOcurring,
@@ -37,6 +38,7 @@ if __name__ == "__main__":
     exploiter = args.exploiter
     inputs = bcolz.open(osp.join(DATA_DIR, "trn_inputs.bcolz"), 'r')
     targets = bcolz.open(osp.join(DATA_DIR, "trn_targets.bcolz"), 'r')
+    pathlib.Path('checkpoints').mkdir(exist_ok=True)
     checkpoint_str = "checkpoints/pop-%03d_task-%03d.pth"
     interval_limit = int(np.ceil(EPOCHS / EXPLOIT_INTERVAL))
     table_name = "populations"
@@ -74,7 +76,6 @@ if __name__ == "__main__":
             task = get_a_task(connect_str_or_path, USE_SQLITE, population_id,
                               interval_limit)
             task_id, intervals_trained, seed_for_shuffling = task
-            print_with_time(task)
         except RemainingTasksTaken:
             if task_wait_count == 0:
                 print_with_time("Waiting for a task to be available.")
@@ -82,9 +83,16 @@ if __name__ == "__main__":
             task_wait_count += 1
             continue
         except PopulationFinished:
-            scores = get_col_from_populations(
-                connect_str_or_path, USE_SQLITE, population_id, "score")
-            print("Population finished. Best score: %.2f" % max(scores))
+            task_ids, scores = get_task_ids_and_scores(connect_str_or_path,
+                                                       USE_SQLITE,
+                                                       population_id)
+            print("Population finished. Best score: %.2f" % scores[0])
+            checkpoint_path = (checkpoint_str % (population_id, task_ids[0]))
+            checkpoint = torch.load(checkpoint_path)
+            pre, suf = checkpoint_path.split('.')
+            weights_path = pre + "_weights." + suf
+            torch.save(checkpoint['model_state_dict'], weights_path)
+            print("Best weights saved to: %s" % weights_path)
             break
         except (ExploitationNeeded, ExploitationOcurring):
             if exploiter:
