@@ -79,15 +79,14 @@ class Trainer:
         batch_indices = tqdm.tqdm(range(num_batches),
                                   desc='Eval (interval %d)' % interval_id,
                                   ncols=80, leave=True)
-        with torch.no_grad():
-            for k in batch_indices:
-                inp = self.inputs[k*self.batch_size:(k+1)*self.batch_size]
-                target = self.targets[k*self.batch_size:(k+1)*self.batch_size]
-                inp = Variable(torch.from_numpy(inp).cuda())
-                target = Variable(torch.from_numpy(target).long().cuda())
-                output = self.model(inp)
-                pred = output.data.max(1, keepdim=True)[1]
-                correct += pred.eq(target.data.view_as(pred)).cpu().sum()
+        for k in batch_indices:
+            inp = self.inputs[k*self.batch_size:(k+1)*self.batch_size]
+            target = self.targets[k*self.batch_size:(k+1)*self.batch_size]
+            inp = Variable(torch.from_numpy(inp).cuda(), volatile=True)
+            target = Variable(torch.from_numpy(target).long().cuda())
+            output = self.model(inp)
+            pred = output.data.max(1, keepdim=True)[1]
+            correct += pred.eq(target.data.view_as(pred)).cpu().sum()
         accuracy = 100. * correct / len(self.val_indices)
         return accuracy
 
