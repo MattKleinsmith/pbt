@@ -46,6 +46,7 @@ class Trainer:
     def train(self, second_half, seed_for_shuffling):
         np.random.seed(seed_for_shuffling)
         np.random.shuffle(self.trn_indices)  # BUG: This doesn't do anything.
+        print("Error: Your data isn't being shuffled. Fix train function or use your own.")
         num_batches = int(np.ceil(len(self.trn_indices) / self.batch_size))
         batch_indices = tqdm.tqdm(range(num_batches),
                                   desc='Train (task %d)' % self.task_id,
